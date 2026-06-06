@@ -5,27 +5,34 @@ Internal tool to discover artists by country and release year using the Spotify 
 ## Setup
 
 1. Get your Client ID and Secret from [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
-2. Fill them into `config.js`
-3. Host both `index.html` and `config.js` on any static host
+2. Copy `.env.example` to `.env` and fill in your credentials
+3. Run locally with Netlify Dev (credentials stay server-side — never in the browser)
+
+```bash
+cp .env.example .env
+# edit .env with your Spotify credentials
+npm run dev
+```
+
+Open **http://localhost:8888**
 
 ## Files
 
 - `index.html` — the app
-- `config.js` — your Spotify credentials (never commit this)
-- `.gitignore` — excludes config.js from git
+- `.env` — your Spotify credentials for local dev (never commit this)
+- `.env.example` — template without secrets (safe to commit)
+- `netlify/functions/` — serverless functions for auth and artist country lookup
 
 ## Hosting on Netlify
 
-1. Push this repo to GitHub (without config.js)
+1. Push this repo to GitHub (`.env` is gitignored)
 2. Connect the repo in Netlify
-3. In Netlify: Site Settings → Build & Deploy → add a `config.js` file manually via the Netlify UI, or use the approach below
+3. In Netlify → Site Settings → Environment variables, add:
+   - `SPOTIFY_CLIENT_ID`
+   - `SPOTIFY_CLIENT_SECRET`
+4. Deploy
 
-### Easier Netlify approach
-
-Since config.js is gitignored, after deploying on Netlify go to:
-**Deploys → drag and drop** your full folder (including config.js) directly onto Netlify Drop at app.netlify.com/drop
-
-That way your credentials never touch GitHub.
+No `config.js` needed — credentials live only in environment variables.
 
 ## Countries supported
 

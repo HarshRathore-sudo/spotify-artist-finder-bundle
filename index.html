@@ -4,7 +4,6 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Spotify Artist Finder — Doles Music</title>
-<script src="config.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
 <style>
   :root {
@@ -481,11 +480,6 @@
 </main>
 
 <script>
-// ── credentials loaded from config.js ────────────────────────────────────────
-const CLIENT_ID     = window.SPOTIFY_CONFIG?.CLIENT_ID     || '';
-const CLIENT_SECRET = window.SPOTIFY_CONFIG?.CLIENT_SECRET || '';
-// ─────────────────────────────────────────────────────────────────────────────
-
 const COUNTRIES = [
   { code: 'DE', name: 'Germany' },
   { code: 'AE', name: 'UAE / Dubai' },
@@ -538,54 +532,16 @@ function toggleYearField() {
 let cachedToken = null;
 let tokenExpiry = 0;
 
-function assertCredentials() {
-  if (CLIENT_ID && CLIENT_SECRET) return;
-  const onGithub = location.hostname.includes('github.io');
-  const onNetlify = location.hostname.includes('netlify.app');
-  if (onNetlify) {
-    throw new Error(
-      'Add SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in Netlify → Site Settings → Environment variables, then redeploy.'
-    );
-  }
-  if (onGithub) {
-    throw new Error(
-      'config.js is not on GitHub (by design — it contains secrets). Run locally with: python3 -m http.server 8080 then open http://localhost:8080 — or deploy on Netlify with environment variables.'
-    );
-  }
-  throw new Error(
-    'config.js not loaded. Keep config.js next to index.html and open via a local server: python3 -m http.server 8080 → http://localhost:8080 (do not double-click the HTML file).'
-  );
-}
-
 async function getToken() {
   if (cachedToken && Date.now() < tokenExpiry) return cachedToken;
 
-  let res = await fetch('/.netlify/functions/token', { method: 'POST' }).catch(() => null);
+  const res = await fetch('/.netlify/functions/token', { method: 'POST' }).catch(() => null);
 
-  if (res?.ok) {
-    const data = await res.json();
-    cachedToken = data.access_token;
-    tokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
-    return cachedToken;
-  }
-
-  assertCredentials();
-  const creds = btoa(`${CLIENT_ID}:${CLIENT_SECRET}`);
-  res = await fetch('https://accounts.spotify.com/api/token', {
-    method: 'POST',
-    headers: {
-      Authorization: `Basic ${creds}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: 'grant_type=client_credentials',
-  });
-
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
+  if (!res?.ok) {
+    const detail = res ? await res.json().catch(() => ({})) : {};
     throw new Error(
-      detail.error_description ||
       detail.error ||
-      'Auth failed — check your Client ID and Secret in config.js'
+      'Could not authenticate. Locally: copy .env.example to .env, add your Spotify credentials, then run `npm run dev`. On Netlify: set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in Site Settings → Environment variables.'
     );
   }
 
