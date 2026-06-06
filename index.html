@@ -430,10 +430,11 @@
 <main>
   <div class="controls">
     <div class="field">
-      <label>Mode</label>
-      <select id="mode" onchange="toggleYearField()">
-        <option value="new-releases">New Releases</option>
-        <option value="year-search">Search by Year</option>
+      <label>Release period</label>
+      <select id="periodType" onchange="toggleTimelineFields()">
+        <option value="month">By month</option>
+        <option value="year">By year</option>
+        <option value="new">New (last 2 weeks)</option>
       </select>
     </div>
     <div class="field">
@@ -441,18 +442,19 @@
       <select id="country" class="wide"></select>
     </div>
     <div class="field">
-      <label title="Uses MusicBrainz to match artist nationality — works on Netlify deploy">Artist filter</label>
+      <label title="Uses MusicBrainz to match artist nationality">Artist filter</label>
       <select id="artistFilter">
+        <option value="origin" selected>Artists from this country only</option>
         <option value="market">Releases available in country</option>
-        <option value="origin">Artists from this country only</option>
       </select>
     </div>
-    <div class="field" id="yearField" style="display:none">
+    <div class="field" id="yearField">
       <label>Year</label>
-      <select id="year">
-        <option value="2026">2026</option>
-        <option value="2025" selected>2025</option>
-      </select>
+      <select id="year"></select>
+    </div>
+    <div class="field" id="monthField">
+      <label>Month</label>
+      <select id="month"></select>
     </div>
     <div class="field">
       <label>Release Type</label>
@@ -473,7 +475,7 @@
 
   <div class="layout" id="layout">
     <div class="grid" id="grid">
-      <div class="empty">Pick a country and mode, then hit Search</div>
+      <div class="empty">Pick country, release period, and hit Search</div>
     </div>
     <div class="panel" id="panel" style="display:none"></div>
   </div>
@@ -523,10 +525,70 @@ COUNTRIES.forEach(c => {
   countrySelect.appendChild(opt);
 });
 
-function toggleYearField() {
-  const mode = document.getElementById('mode').value;
+const yearSelect = document.getElementById('year');
+const currentYear = new Date().getFullYear();
+for (let y = currentYear; y >= 2018; y--) {
+  const opt = document.createElement('option');
+  opt.value = String(y);
+  opt.textContent = String(y);
+  if (y === currentYear) opt.selected = true;
+  yearSelect.appendChild(opt);
+}
+
+const MONTHS = [
+  { value: '01', name: 'January' }, { value: '02', name: 'February' },
+  { value: '03', name: 'March' }, { value: '04', name: 'April' },
+  { value: '05', name: 'May' }, { value: '06', name: 'June' },
+  { value: '07', name: 'July' }, { value: '08', name: 'August' },
+  { value: '09', name: 'September' }, { value: '10', name: 'October' },
+  { value: '11', name: 'November' }, { value: '12', name: 'December' },
+];
+const monthSelect = document.getElementById('month');
+const currentMonth = String(new Date().getMonth() + 1).padStart(2, '0');
+MONTHS.forEach(m => {
+  const opt = document.createElement('option');
+  opt.value = m.value;
+  opt.textContent = m.name;
+  if (m.value === currentMonth) opt.selected = true;
+  monthSelect.appendChild(opt);
+});
+
+function toggleTimelineFields() {
+  const periodType = document.getElementById('periodType').value;
   document.getElementById('yearField').style.display =
-    mode === 'year-search' ? 'flex' : 'none';
+    periodType === 'new' ? 'none' : 'flex';
+  document.getElementById('monthField').style.display =
+    periodType === 'month' ? 'flex' : 'none';
+}
+
+toggleTimelineFields();
+
+function buildSpotifyQuery(periodType, year) {
+  if (periodType === 'new') return 'tag:new';
+  return `year:${year}`;
+}
+
+function releaseMatchesPeriod(releaseDate, periodType, year, month) {
+  if (!releaseDate) return false;
+  if (periodType === 'new') return true;
+  if (periodType === 'year') {
+    return releaseDate.startsWith(`${year}-`) || releaseDate === year;
+  }
+  const monthPrefix = `${year}-${month}`;
+  return releaseDate.startsWith(monthPrefix);
+}
+
+function filterAlbumsByPeriod(albums, periodType, year, month) {
+  return albums.filter((album) =>
+    releaseMatchesPeriod(album.release_date, periodType, year, month)
+  );
+}
+
+function formatPeriodLabel(periodType, year, month) {
+  if (periodType === 'new') return 'the last 2 weeks';
+  if (periodType === 'year') return year;
+  const monthName = MONTHS.find((m) => m.value === month)?.name || month;
+  return `${monthName} ${year}`;
 }
 
 let cachedToken = null;
@@ -667,9 +729,10 @@ let currentArtists = [];
 let activeCard = null;
 
 async function handleSearch() {
-  const mode = document.getElementById('mode').value;
+  const periodType = document.getElementById('periodType').value;
   const country = document.getElementById('country').value;
   const year = document.getElementById('year').value;
+  const month = document.getElementById('month').value;
   const releaseType = document.getElementById('releaseType').value;
   const artistFilter = document.getElementById('artistFilter').value;
 
@@ -679,9 +742,11 @@ async function handleSearch() {
 
   try {
     const token = await getToken();
-    const query = mode === 'new-releases' ? 'tag:new' : `year:${year}`;
-    const results = await searchItems(query, country, token, ['album', 'track']);
+    const query = buildSpotifyQuery(periodType, year);
+    const maxResults = periodType === 'new' ? 50 : 100;
+    const results = await searchItems(query, country, token, ['album', 'track'], maxResults);
     let albums = albumsFromSearchResults(results);
+    albums = filterAlbumsByPeriod(albums, periodType, year, month);
 
     let artists = extractArtists(albums, releaseType);
 
@@ -695,9 +760,10 @@ async function handleSearch() {
     renderGrid(currentArtists);
 
     const countryName = COUNTRIES.find(c => c.code === country)?.name || country;
+    const periodLabel = formatPeriodLabel(periodType, year, month);
     const filterLabel = artistFilter === 'origin'
-      ? `artists from <span>${countryName}</span> who released on Spotify`
-      : `artists with releases available in the <span>${countryName}</span> market`;
+      ? `artists from <span>${countryName}</span> who released in <span>${periodLabel}</span>`
+      : `artists with releases in <span>${periodLabel}</span> available in the <span>${countryName}</span> market`;
     document.getElementById('meta').innerHTML =
       `<div class="meta"><span>${currentArtists.length}</span> ${filterLabel}</div>`;
   } catch (e) {
