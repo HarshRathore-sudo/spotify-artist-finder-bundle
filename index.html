@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Spotify Artist Finder — Doles Music</title>
+<script src="config.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --green: #1db954;
+    --green-dim: #158a3e;
+    --bg: #080808;
+    --surface: #111111;
+    --surface2: #171717;
+    --border: #1f1f1f;
+    --border2: #2a2a2a;
+    --text: #e2e2e2;
+    --muted: #555;
+    --muted2: #888;
+    --red: #ff4444;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* grain overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.4;
+  }
+
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 28px 40px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    background: rgba(8,8,8,0.92);
+    backdrop-filter: blur(12px);
+    z-index: 100;
+  }
+
+  .logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 18px;
+    letter-spacing: 0.5px;
+    color: var(--text);
+  }
+
+  .logo span { color: var(--green); }
+
+  .header-tag {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  main {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 40px 40px 80px;
+  }
+
+  .controls {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 28px 32px;
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    margin-bottom: 32px;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  label {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  input, select {
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 13px;
+    padding: 10px 14px;
+    outline: none;
+    transition: border-color 0.2s;
+    appearance: none;
+  }
+
+  input:focus, select:focus {
+    border-color: var(--green);
+  }
+
+  input { width: 220px; }
+  select { width: 200px; cursor: pointer; }
+  select.wide { width: 260px; }
+
+  .btn {
+    background: var(--green);
+    border: none;
+    border-radius: 6px;
+    color: #000;
+    cursor: pointer;
+    font-family: 'Space Mono', monospace;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    padding: 11px 28px;
+    text-transform: uppercase;
+    transition: background 0.15s, transform 0.1s;
+    white-space: nowrap;
+  }
+
+  .btn:hover { background: #22d460; }
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled { background: #1a3d27; color: #2a6640; cursor: not-allowed; }
+
+  .error {
+    background: #1a0808;
+    border: 1px solid #4a0f0f;
+    border-radius: 6px;
+    color: var(--red);
+    font-size: 12px;
+    margin-bottom: 20px;
+    padding: 12px 16px;
+  }
+
+  .meta {
+    color: var(--muted);
+    font-size: 11px;
+    margin-bottom: 20px;
+    letter-spacing: 0.5px;
+  }
+
+  .meta span { color: var(--green); }
+
+  .layout {
+    display: grid;
+    gap: 24px;
+    transition: grid-template-columns 0.3s;
+  }
+
+  .layout.with-panel {
+    grid-template-columns: 1fr 360px;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 10px;
+    align-content: start;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    gap: 14px;
+    padding: 14px;
+    transition: border-color 0.15s, background 0.15s;
+    animation: fadeUp 0.3s ease both;
+  }
+
+  .card:hover { border-color: var(--border2); background: var(--surface2); }
+  .card.active { border-color: var(--green); background: #0a1a0d; }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .thumb {
+    border-radius: 4px;
+    flex-shrink: 0;
+    height: 60px;
+    object-fit: cover;
+    width: 60px;
+    background: var(--surface2);
+  }
+
+  .thumb-placeholder {
+    border-radius: 4px;
+    flex-shrink: 0;
+    height: 60px;
+    width: 60px;
+    background: var(--surface2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 20px;
+  }
+
+  .card-info { overflow: hidden; flex: 1; }
+
+  .artist-name {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text);
+  }
+
+  .album-name {
+    font-size: 11px;
+    color: var(--muted2);
+    margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .release-date {
+    font-size: 11px;
+    color: var(--green);
+    margin-top: 5px;
+  }
+
+  .tag {
+    background: #0d1f12;
+    border-radius: 3px;
+    color: var(--green);
+    display: inline-block;
+    font-size: 9px;
+    letter-spacing: 1px;
+    margin-top: 5px;
+    padding: 2px 7px;
+    text-transform: uppercase;
+  }
+
+  /* side panel */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+    position: sticky;
+    top: 90px;
+    align-self: start;
+    max-height: calc(100vh - 120px);
+    overflow-y: auto;
+  }
+
+  .panel::-webkit-scrollbar { width: 4px; }
+  .panel::-webkit-scrollbar-track { background: transparent; }
+  .panel::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  .panel-close {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    float: right;
+    font-size: 20px;
+    line-height: 1;
+    padding: 0;
+    transition: color 0.15s;
+  }
+
+  .panel-close:hover { color: var(--text); }
+
+  .panel-img {
+    width: 100%;
+    border-radius: 6px;
+    margin: 16px 0 12px;
+    display: block;
+  }
+
+  .panel-name {
+    font-family: 'Syne', sans-serif;
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--green);
+    line-height: 1.2;
+    clear: both;
+  }
+
+  .panel-album {
+    font-size: 11px;
+    color: var(--muted2);
+    margin-top: 6px;
+    margin-bottom: 14px;
+  }
+
+  .panel-links {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+  }
+
+  .panel-link {
+    color: var(--green);
+    font-size: 11px;
+    text-decoration: none;
+    border: 1px solid #1a3d27;
+    border-radius: 4px;
+    padding: 5px 12px;
+    transition: background 0.15s;
+  }
+
+  .panel-link:hover { background: #0d1f12; }
+
+  .section-head {
+    color: var(--muted);
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin: 20px 0 10px;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+  }
+
+  .track-row {
+    align-items: center;
+    border-bottom: 1px solid #111;
+    display: flex;
+    gap: 10px;
+    padding: 9px 0;
+  }
+
+  .track-num { color: var(--muted); font-size: 11px; width: 18px; text-align: right; }
+  .track-name { font-size: 12px; color: #ccc; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .track-link { color: var(--green); font-size: 11px; text-decoration: none; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  .chip {
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: 20px;
+    color: var(--muted2);
+    font-size: 11px;
+    padding: 5px 13px;
+    text-decoration: none;
+    transition: border-color 0.15s, color 0.15s;
+  }
+
+  .chip:hover { border-color: var(--green); color: var(--green); }
+
+  .loading-bar {
+    height: 2px;
+    background: var(--border);
+    border-radius: 2px;
+    margin-bottom: 28px;
+    overflow: hidden;
+    display: none;
+  }
+
+  .loading-bar.active { display: block; }
+
+  .loading-bar::after {
+    content: '';
+    display: block;
+    height: 100%;
+    width: 40%;
+    background: var(--green);
+    border-radius: 2px;
+    animation: slide 1s ease-in-out infinite;
+  }
+
+  @keyframes slide {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+  }
+
+  .empty {
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    margin-top: 80px;
+    line-height: 2;
+  }
+
+  .side-loading {
+    color: var(--muted);
+    font-size: 11px;
+    margin-top: 20px;
+  }
+
+  @media (max-width: 900px) {
+    header { padding: 20px 20px; }
+    main { padding: 24px 20px 60px; }
+    .controls { padding: 20px; gap: 14px; }
+    input, select { width: 100%; }
+    .layout.with-panel { grid-template-columns: 1fr; }
+    .panel { position: static; max-height: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Doles <span>Music</span></div>
+  <div class="header-tag">Artist Discovery Tool</div>
+</header>
+
+<main>
+  <div class="controls">
+    <div class="field">
+      <label>Mode</label>
+      <select id="mode" onchange="toggleYearField()">
+        <option value="new-releases">New Releases</option>
+        <option value="year-search">Search by Year</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Market / Country</label>
+      <select id="country" class="wide"></select>
+    </div>
+    <div class="field" id="yearField" style="display:none">
+      <label>Year</label>
+      <select id="year">
+        <option value="2026">2026</option>
+        <option value="2025" selected>2025</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Release Type</label>
+      <select id="releaseType">
+        <option value="all">All</option>
+        <option value="album">Albums only</option>
+        <option value="single">Singles only</option>
+      </select>
+    </div>
+    <div class="field">
+      <button class="btn" onclick="handleSearch()" id="searchBtn">Search</button>
+    </div>
+  </div>
+
+  <div class="loading-bar" id="loadingBar"></div>
+  <div id="error"></div>
+  <div id="meta"></div>
+
+  <div class="layout" id="layout">
+    <div class="grid" id="grid">
+      <div class="empty">Select a country and hit Search</div>
+    </div>
+    <div class="panel" id="panel" style="display:none"></div>
+  </div>
+</main>
+
+<script>
+// ── credentials loaded from config.js ────────────────────────────────────────
+const CLIENT_ID     = window.SPOTIFY_CONFIG?.CLIENT_ID     || '';
+const CLIENT_SECRET = window.SPOTIFY_CONFIG?.CLIENT_SECRET || '';
+// ─────────────────────────────────────────────────────────────────────────────
+
+const COUNTRIES = [
+  { code: 'DE', name: 'Germany' },
+  { code: 'AE', name: 'UAE / Dubai' },
+  { code: 'IN', name: 'India' },
+  { code: 'US', name: 'United States' },
+  { code: 'GB', name: 'United Kingdom' },
+  { code: 'FR', name: 'France' },
+  { code: 'JP', name: 'Japan' },
+  { code: 'BR', name: 'Brazil' },
+  { code: 'NG', name: 'Nigeria' },
+  { code: 'ZA', name: 'South Africa' },
+  { code: 'KR', name: 'South Korea' },
+  { code: 'MX', name: 'Mexico' },
+  { code: 'TR', name: 'Turkey' },
+  { code: 'PL', name: 'Poland' },
+  { code: 'NL', name: 'Netherlands' },
+  { code: 'SE', name: 'Sweden' },
+  { code: 'IT', name: 'Italy' },
+  { code: 'ES', name: 'Spain' },
+  { code: 'AU', name: 'Australia' },
+  { code: 'CA', name: 'Canada' },
+  { code: 'AR', name: 'Argentina' },
+  { code: 'CO', name: 'Colombia' },
+  { code: 'PK', name: 'Pakistan' },
+  { code: 'ID', name: 'Indonesia' },
+  { code: 'PH', name: 'Philippines' },
+  { code: 'EG', name: 'Egypt' },
+  { code: 'SA', name: 'Saudi Arabia' },
+  { code: 'SG', name: 'Singapore' },
+  { code: 'TH', name: 'Thailand' },
+  { code: 'PT', name: 'Portugal' },
+];
+
+// populate country dropdown
+const countrySelect = document.getElementById('country');
+COUNTRIES.forEach(c => {
+  const opt = document.createElement('option');
+  opt.value = c.code;
+  opt.textContent = `${c.name} (${c.code})`;
+  if (c.code === 'DE') opt.selected = true;
+  countrySelect.appendChild(opt);
+});
+
+function toggleYearField() {
+  const mode = document.getElementById('mode').value;
+  document.getElementById('yearField').style.display =
+    mode === 'year-search' ? 'flex' : 'none';
+}
+
+let cachedToken = null;
+let tokenExpiry = 0;
+
+async function getToken() {
+  if (cachedToken && Date.now() < tokenExpiry) return cachedToken;
+  const creds = btoa(`${CLIENT_ID}:${CLIENT_SECRET}`);
+  const res = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${creds}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: 'grant_type=client_credentials',
+  });
+  if (!res.ok) throw new Error('Auth failed — check your Client ID and Secret in the HTML file');
+  const data = await res.json();
+  cachedToken = data.access_token;
+  tokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
+  return cachedToken;
+}
+
+async function apiFetch(path, token) {
+  const res = await fetch(`https://api.spotify.com/v1${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status} on ${path}`);
+  return res.json();
+}
+
+function extractArtists(albums, releaseTypeFilter) {
+  const seen = new Set();
+  const artists = [];
+  for (const album of albums) {
+    if (releaseTypeFilter !== 'all' && album.album_type !== releaseTypeFilter) continue;
+    for (const artist of album.artists) {
+      if (!seen.has(artist.id)) {
+        seen.add(artist.id);
+        artists.push({
+          id: artist.id,
+          name: artist.name,
+          latestAlbum: album.name,
+          releaseDate: album.release_date,
+          albumImage: album.images?.[0]?.url || null,
+          albumThumb: album.images?.[1]?.url || album.images?.[0]?.url || null,
+          albumUrl: album.external_urls?.spotify,
+          artistUrl: artist.external_urls?.spotify,
+          albumType: album.album_type,
+        });
+      }
+    }
+  }
+  return artists;
+}
+
+let currentArtists = [];
+let activeCard = null;
+
+async function handleSearch() {
+  const mode = document.getElementById('mode').value;
+  const country = document.getElementById('country').value;
+  const year = document.getElementById('year').value;
+  const releaseType = document.getElementById('releaseType').value;
+
+  setLoading(true);
+  clearError();
+  clearResults();
+
+  try {
+    const token = await getToken();
+    let albums = [];
+
+    if (mode === 'new-releases') {
+      const data = await apiFetch(`/browse/new-releases?country=${country}&limit=50`, token);
+      albums = data.albums.items;
+    } else {
+      const q = encodeURIComponent(`year:${year}`);
+      const data = await apiFetch(`/search?q=${q}&type=album&market=${country}&limit=50`, token);
+      albums = data.albums.items;
+    }
+
+    currentArtists = extractArtists(albums, releaseType);
+    renderGrid(currentArtists);
+
+    const countryName = COUNTRIES.find(c => c.code === country)?.name || country;
+    document.getElementById('meta').innerHTML =
+      `<div class="meta"><span>${currentArtists.length}</span> artists found in <span>${countryName}</span> market</div>`;
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+function renderGrid(artists) {
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+
+  if (artists.length === 0) {
+    grid.innerHTML = '<div class="empty">No results found. Try a different mode or country.</div>';
+    return;
+  }
+
+  artists.forEach((artist, i) => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.animationDelay = `${Math.min(i * 0.03, 0.5)}s`;
+    card.dataset.id = artist.id;
+    card.innerHTML = `
+      ${artist.albumThumb
+        ? `<img class="thumb" src="${artist.albumThumb}" alt="${artist.latestAlbum}" loading="lazy" />`
+        : `<div class="thumb-placeholder">♪</div>`}
+      <div class="card-info">
+        <div class="artist-name">${artist.name}</div>
+        <div class="album-name">${artist.latestAlbum}</div>
+        <div class="release-date">${artist.releaseDate}</div>
+        <span class="tag">${artist.albumType}</span>
+      </div>
+    `;
+    card.onclick = () => openPanel(artist, card);
+    grid.appendChild(card);
+  });
+}
+
+async function openPanel(artist, cardEl) {
+  if (activeCard) activeCard.classList.remove('active');
+  cardEl.classList.add('active');
+  activeCard = cardEl;
+
+  const layout = document.getElementById('layout');
+  const panel = document.getElementById('panel');
+  layout.classList.add('with-panel');
+  panel.style.display = 'block';
+
+  panel.innerHTML = `
+    <button class="panel-close" onclick="closePanel()">×</button>
+    <div class="panel-name">${artist.name}</div>
+    <div class="panel-album">${artist.latestAlbum} · ${artist.releaseDate}</div>
+    ${artist.albumImage ? `<img class="panel-img" src="${artist.albumImage}" alt="${artist.latestAlbum}" />` : ''}
+    <div class="panel-links">
+      ${artist.artistUrl ? `<a class="panel-link" href="${artist.artistUrl}" target="_blank" rel="noreferrer">Artist on Spotify ↗</a>` : ''}
+      ${artist.albumUrl ? `<a class="panel-link" href="${artist.albumUrl}" target="_blank" rel="noreferrer">Release ↗</a>` : ''}
+    </div>
+    <div id="sideContent"><div class="side-loading">Loading tracks & related...</div></div>
+  `;
+
+  try {
+    const token = await getToken();
+    const [relData, tracksData] = await Promise.all([
+      apiFetch(`/artists/${artist.id}/related-artists`, token).catch(() => ({ artists: [] })),
+      apiFetch(`/artists/${artist.id}/top-tracks?market=${document.getElementById('country').value}`, token).catch(() => ({ tracks: [] })),
+    ]);
+
+    const related = relData.artists.slice(0, 8);
+    const tracks = tracksData.tracks.slice(0, 5);
+
+    let html = '';
+
+    if (tracks.length) {
+      html += `<div class="section-head">Top Tracks</div>`;
+      tracks.forEach((t, i) => {
+        html += `
+          <div class="track-row">
+            <span class="track-num">${i + 1}</span>
+            <span class="track-name">${t.name}</span>
+            <a class="track-link" href="${t.external_urls?.spotify}" target="_blank" rel="noreferrer">↗</a>
+          </div>`;
+      });
+    }
+
+    if (related.length) {
+      html += `<div class="section-head">Related Artists</div><div class="chips">`;
+      related.forEach(r => {
+        html += `<a class="chip" href="${r.external_urls?.spotify}" target="_blank" rel="noreferrer">${r.name}</a>`;
+      });
+      html += `</div>`;
+    }
+
+    document.getElementById('sideContent').innerHTML = html || '<p style="color:var(--muted);font-size:12px;margin-top:16px">No extra data available</p>';
+  } catch (e) {
+    document.getElementById('sideContent').innerHTML = '';
+  }
+}
+
+function closePanel() {
+  const layout = document.getElementById('layout');
+  const panel = document.getElementById('panel');
+  layout.classList.remove('with-panel');
+  panel.style.display = 'none';
+  if (activeCard) { activeCard.classList.remove('active'); activeCard = null; }
+}
+
+function clearResults() {
+  document.getElementById('grid').innerHTML = '';
+  document.getElementById('meta').innerHTML = '';
+  closePanel();
+}
+
+function setLoading(on) {
+  document.getElementById('loadingBar').classList.toggle('active', on);
+  document.getElementById('searchBtn').disabled = on;
+  document.getElementById('searchBtn').textContent = on ? 'Fetching...' : 'Search';
+}
+
+function showError(msg) {
+  document.getElementById('error').innerHTML = `<div class="error">${msg}</div>`;
+}
+
+function clearError() {
+  document.getElementById('error').innerHTML = '';
+}
+</script>
+</body>
+</html>
