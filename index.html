@@ -595,6 +595,11 @@ function albumsFromSearchResults(results) {
 }
 
 const countryLookupCache = new Map();
+const ORIGIN_LOOKUP_LIMIT = 20;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function artistOriginMatches(lookup, countryCode) {
   if (!lookup) return false;
@@ -604,26 +609,33 @@ function artistOriginMatches(lookup, countryCode) {
   return false;
 }
 
-async function filterArtistsByOrigin(artists, countryCode) {
-  const unknown = artists.filter((a) => !countryLookupCache.has(a.name));
-  if (unknown.length) {
-    const res = await fetch('/.netlify/functions/artist-country', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ names: unknown.map((a) => a.name) }),
-    });
-    if (!res.ok) {
-      throw new Error(
-        'Artist country filter needs Netlify (MusicBrainz lookup). Deploy the app on Netlify, or use "Releases available in country".'
-      );
-    }
-    const data = await res.json();
-    for (const [name, lookup] of Object.entries(data)) {
-      countryLookupCache.set(name, lookup);
-    }
+async function lookupArtistCountry(name) {
+  if (countryLookupCache.has(name)) return countryLookupCache.get(name);
+
+  const res = await fetch(
+    `/.netlify/functions/artist-country?name=${encodeURIComponent(name)}`
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || `Country lookup failed (${res.status})`);
   }
 
-  return artists.filter((artist) => artistOriginMatches(countryLookupCache.get(artist.name), countryCode));
+  countryLookupCache.set(name, data);
+  return data;
+}
+
+async function filterArtistsByOrigin(artists, countryCode, onProgress) {
+  const toCheck = artists.slice(0, ORIGIN_LOOKUP_LIMIT);
+  const filtered = [];
+
+  for (let i = 0; i < toCheck.length; i++) {
+    onProgress?.(i + 1, toCheck.length);
+    const lookup = await lookupArtistCountry(toCheck[i].name);
+    if (artistOriginMatches(lookup, countryCode)) filtered.push(toCheck[i]);
+    if (i < toCheck.length - 1) await sleep(1100);
+  }
+
+  return filtered;
 }
 
 function extractArtists(albums, releaseTypeFilter) {
@@ -674,8 +686,9 @@ async function handleSearch() {
     let artists = extractArtists(albums, releaseType);
 
     if (artistFilter === 'origin') {
-      document.getElementById('searchBtn').textContent = 'Checking countries...';
-      artists = await filterArtistsByOrigin(artists, country);
+      artists = await filterArtistsByOrigin(artists, country, (current, total) => {
+        document.getElementById('searchBtn').textContent = `Checking ${current}/${total}...`;
+      });
     }
 
     currentArtists = artists;

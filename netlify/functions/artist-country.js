@@ -6,16 +6,14 @@ const cors = {
   'Content-Type': 'application/json',
 };
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function lookupArtist(name) {
   const q = encodeURIComponent(`artist:"${name}"`);
   const res = await fetch(`https://musicbrainz.org/ws/2/artist/?query=${q}&fmt=json&limit=5`, {
     headers: { 'User-Agent': USER_AGENT },
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    throw new Error(`MusicBrainz error ${res.status}`);
+  }
 
   const data = await res.json();
   const best = data.artists?.[0];
@@ -34,22 +32,32 @@ exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 204, headers: cors };
   }
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, headers: cors, body: JSON.stringify({ error: 'Method Not Allowed' }) };
-  }
 
-  let names = [];
   try {
-    names = JSON.parse(event.body || '{}').names || [];
-  } catch {
-    return { statusCode: 400, headers: cors, body: JSON.stringify({ error: 'Invalid JSON body' }) };
-  }
+    if (event.httpMethod === 'GET') {
+      const name = event.queryStringParameters?.name?.trim();
+      if (!name) {
+        return {
+          statusCode: 400,
+          headers: cors,
+          body: JSON.stringify({ error: 'Missing name query parameter' }),
+        };
+      }
 
-  const results = {};
-  for (const name of names.slice(0, 25)) {
-    results[name] = await lookupArtist(name);
-    await sleep(1100);
-  }
+      const result = await lookupArtist(name);
+      return { statusCode: 200, headers: cors, body: JSON.stringify(result) };
+    }
 
-  return { statusCode: 200, headers: cors, body: JSON.stringify(results) };
+    return {
+      statusCode: 405,
+      headers: cors,
+      body: JSON.stringify({ error: 'Method Not Allowed' }),
+    };
+  } catch (err) {
+    return {
+      statusCode: 502,
+      headers: cors,
+      body: JSON.stringify({ error: err.message || 'Country lookup failed' }),
+    };
+  }
 };
