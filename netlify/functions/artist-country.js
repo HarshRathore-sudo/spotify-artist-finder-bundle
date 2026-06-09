@@ -6,6 +6,12 @@ const cors = {
   'Content-Type': 'application/json',
 };
 
+const BATCH_MAX = 8;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function lookupArtist(name) {
   const q = encodeURIComponent(`artist:"${name}"`);
   const res = await fetch(`https://musicbrainz.org/ws/2/artist/?query=${q}&fmt=json&limit=5`, {
@@ -46,6 +52,24 @@ exports.handler = async (event) => {
 
       const result = await lookupArtist(name);
       return { statusCode: 200, headers: cors, body: JSON.stringify(result) };
+    }
+
+    if (event.httpMethod === 'POST') {
+      let names = [];
+      try {
+        names = JSON.parse(event.body || '{}').names || [];
+      } catch {
+        return { statusCode: 400, headers: cors, body: JSON.stringify({ error: 'Invalid JSON body' }) };
+      }
+
+      const results = {};
+      const batch = names.slice(0, BATCH_MAX);
+      for (let i = 0; i < batch.length; i++) {
+        results[batch[i]] = await lookupArtist(batch[i]);
+        if (i < batch.length - 1) await sleep(1100);
+      }
+
+      return { statusCode: 200, headers: cors, body: JSON.stringify(results) };
     }
 
     return {

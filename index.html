@@ -287,6 +287,21 @@
     max-width: 720px;
   }
 
+  .pagination {
+    align-items: center;
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  .page-info {
+    color: var(--muted2);
+    font-size: 12px;
+    min-width: 140px;
+    text-align: center;
+  }
+
   .error {
     background: #1a0808;
     border: 1px solid #4a0f0f;
@@ -666,6 +681,11 @@
         <tbody id="resultsBody"></tbody>
       </table>
     </div>
+    <div class="pagination" id="pagination" style="display:none">
+      <button class="btn btn-secondary" id="prevPageBtn" onclick="changePage(-1)">Prev</button>
+      <span class="page-info" id="pageInfo">Page 1 of 1</span>
+      <button class="btn btn-secondary" id="nextPageBtn" onclick="changePage(1)">Next</button>
+    </div>
   </div>
 
   <div class="layout" id="layout" style="display:none">
@@ -785,8 +805,6 @@ function getTimelineConfig() {
       start: null,
       end: null,
       label: 'last 2 weeks',
-      spotifyQuery: 'tag:new',
-      maxResults: 50,
     };
   }
 
@@ -798,8 +816,6 @@ function getTimelineConfig() {
       start,
       end,
       label: `${monthName(sm)} ${sy}`,
-      spotifyQuery: `year:${sy}`,
-      maxResults: 100,
     };
   }
 
@@ -807,10 +823,28 @@ function getTimelineConfig() {
   const end = new Date(Number(ey), Number(em), 0, 23, 59, 59);
   if (start > end) throw new Error('Timeline error: "From" date must be before "To" date');
 
-  const spotifyQuery = sy === ey ? `year:${sy}` : `year:${Math.min(sy, ey)}-${Math.max(sy, ey)}`;
   const label = `${monthName(sm)} ${sy} – ${monthName(em)} ${ey}`;
+  return { type: 'range', start, end, label };
+}
 
-  return { type: 'range', start, end, label, spotifyQuery, maxResults: 150 };
+function enumerateMonths(timeline) {
+  if (timeline.type === 'new') return [];
+  const months = [];
+  let d = new Date(timeline.start.getFullYear(), timeline.start.getMonth(), 1);
+  while (d <= timeline.end) {
+    const y = d.getFullYear();
+    const m = d.getMonth();
+    const monthVal = String(m + 1).padStart(2, '0');
+    months.push({
+      year: y,
+      month: monthVal,
+      label: `${monthName(monthVal)} ${y}`,
+      start: new Date(y, m, 1),
+      end: new Date(y, m + 1, 0, 23, 59, 59),
+    });
+    d = new Date(y, m + 1, 1);
+  }
+  return months;
 }
 
 function releaseBounds(releaseDate) {
@@ -876,27 +910,67 @@ async function apiFetch(path, token) {
   return res.json();
 }
 
-async function searchItems(query, country, token, types, maxResults = 50) {
-  const pageSize = 10;
+const SPOTIFY_PAGE_SIZE = 10;
+const SPOTIFY_MAX_OFFSET = 1000;
+const SPOTIFY_MAX_PER_TYPE = 500;
+const ORIGIN_BATCH_SIZE = 8;
+const ROWS_PER_PAGE = 30;
+
+async function searchItemsPaginated(query, country, token, types, maxPerType = SPOTIFY_MAX_PER_TYPE) {
   const collected = { album: [], track: [] };
 
   for (const type of types) {
     let offset = 0;
-    while (collected[type].length < maxResults) {
+    while (collected[type].length < maxPerType && offset <= SPOTIFY_MAX_OFFSET) {
       const q = encodeURIComponent(query);
       const data = await apiFetch(
-        `/search?q=${q}&type=${type}&market=${country}&limit=${pageSize}&offset=${offset}`,
+        `/search?q=${q}&type=${type}&market=${country}&limit=${SPOTIFY_PAGE_SIZE}&offset=${offset}`,
         token
       );
       const items = data[`${type}s`]?.items || [];
       collected[type].push(...items);
-      if (items.length < pageSize || !data[`${type}s`]?.next) break;
-      offset += pageSize;
+      if (items.length < SPOTIFY_PAGE_SIZE || !data[`${type}s`]?.next) break;
+      offset += SPOTIFY_PAGE_SIZE;
     }
-    collected[type] = collected[type].slice(0, maxResults);
+    collected[type] = collected[type].slice(0, maxPerType);
   }
 
   return collected;
+}
+
+async function discoverReleases(timeline, country, token, releaseType, onProgress) {
+  const albumMap = new Map();
+
+  if (timeline.type === 'new') {
+    onProgress?.('Fetching new releases from Spotify...');
+    const results = await searchItemsPaginated('tag:new', country, token, ['album', 'track'], 300);
+    for (const album of albumsFromSearchResults(results)) {
+      albumMap.set(album.id, album);
+    }
+  } else {
+    const months = enumerateMonths(timeline);
+    const perMonth = Math.min(200, Math.max(50, Math.floor(800 / Math.max(months.length, 1))));
+
+    for (let i = 0; i < months.length; i++) {
+      const m = months[i];
+      onProgress?.(`Fetching ${m.label} (${i + 1}/${months.length})...`);
+      const results = await searchItemsPaginated(
+        `year:${m.year}`,
+        country,
+        token,
+        ['album', 'track'],
+        perMonth
+      );
+      const monthTimeline = { type: 'month', start: m.start, end: m.end };
+      const albums = filterAlbumsByTimeline(albumsFromSearchResults(results), monthTimeline);
+      for (const album of albums) {
+        albumMap.set(album.id, album);
+      }
+    }
+  }
+
+  onProgress?.(`Found ${albumMap.size} releases — verifying artist countries...`);
+  return extractReleases([...albumMap.values()], releaseType, country, country);
 }
 
 function albumsFromSearchResults(results) {
@@ -908,7 +982,6 @@ function albumsFromSearchResults(results) {
 }
 
 const countryLookupCache = new Map();
-const ORIGIN_LOOKUP_LIMIT = 50;
 
 function getCountryName(code) {
   return COUNTRIES.find(c => c.code === code)?.name || code;
@@ -931,35 +1004,52 @@ function artistOriginMatches(lookup, countryCode) {
   return false;
 }
 
+async function lookupArtistsBatch(names) {
+  const uncached = names.filter((n) => !countryLookupCache.has(n));
+  if (!uncached.length) return;
+
+  for (let i = 0; i < uncached.length; i += ORIGIN_BATCH_SIZE) {
+    const batch = uncached.slice(i, i + ORIGIN_BATCH_SIZE);
+    const res = await fetch('/.netlify/functions/artist-country', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names: batch }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || `Country lookup failed (${res.status})`);
+    }
+    for (const [name, lookup] of Object.entries(data)) {
+      countryLookupCache.set(name, lookup);
+    }
+  }
+}
+
 async function lookupArtistCountry(name) {
   if (countryLookupCache.has(name)) return countryLookupCache.get(name);
-
-  const res = await fetch(
-    `/.netlify/functions/artist-country?name=${encodeURIComponent(name)}`
-  );
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(data.error || `Country lookup failed (${res.status})`);
-  }
-
-  countryLookupCache.set(name, data);
-  return data;
+  await lookupArtistsBatch([name]);
+  return countryLookupCache.get(name);
 }
 
 async function filterArtistsByOrigin(releases, countryCode, onProgress) {
-  const uniqueNames = [...new Set(releases.map(r => r.artistName))].slice(0, ORIGIN_LOOKUP_LIMIT);
+  const uniqueNames = [...new Set(releases.map((r) => r.artistName))];
   const allowed = new Set();
 
-  for (let i = 0; i < uniqueNames.length; i++) {
-    onProgress?.(i + 1, uniqueNames.length);
-    const lookup = await lookupArtistCountry(uniqueNames[i]);
-    if (artistOriginMatches(lookup, countryCode)) allowed.add(uniqueNames[i]);
-    if (i < uniqueNames.length - 1) await sleep(1100);
+  for (let i = 0; i < uniqueNames.length; i += ORIGIN_BATCH_SIZE) {
+    const batch = uniqueNames.slice(i, i + ORIGIN_BATCH_SIZE);
+    const checked = Math.min(i + batch.length, uniqueNames.length);
+    onProgress?.(checked, uniqueNames.length);
+    await lookupArtistsBatch(batch);
+    for (const name of batch) {
+      if (artistOriginMatches(countryLookupCache.get(name), countryCode)) {
+        allowed.add(name);
+      }
+    }
   }
 
   return releases
-    .filter(r => allowed.has(r.artistName))
-    .map(r => ({
+    .filter((r) => allowed.has(r.artistName))
+    .map((r) => ({
       ...r,
       artistCountry: getCountryName(countryCode),
       originVerified: 'Yes',
@@ -967,10 +1057,14 @@ async function filterArtistsByOrigin(releases, countryCode, onProgress) {
 }
 
 function extractReleases(albums, releaseTypeFilter, countryCode, marketCode) {
+  const seen = new Set();
   const rows = [];
   for (const album of albums) {
     if (releaseTypeFilter !== 'all' && album.album_type !== releaseTypeFilter) continue;
     for (const artist of album.artists) {
+      const key = `${artist.id}:${album.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       rows.push({
         artistId: artist.id,
         artistName: artist.name,
@@ -1077,6 +1171,9 @@ async function checkRosterArtists(rosterNames, countryCode, timeline, token, onP
 let exportRows = [];
 let currentArtists = [];
 let activeCard = null;
+let currentPage = 1;
+let lastTimeline = null;
+let lastCountry = null;
 
 async function handleSearch() {
   const country = document.getElementById('country').value;
@@ -1086,9 +1183,12 @@ async function handleSearch() {
   setLoading(true);
   clearError();
   clearResults();
+  currentPage = 1;
 
   try {
     const timeline = getTimelineConfig();
+    lastTimeline = timeline;
+    lastCountry = country;
     const token = await getToken();
     let rows = [];
 
@@ -1097,18 +1197,12 @@ async function handleSearch() {
         document.getElementById('searchBtn').textContent = msg || `Roster ${cur}/${total}...`;
       });
     } else {
-      const results = await searchItems(
-        timeline.spotifyQuery,
-        country,
-        token,
-        ['album', 'track'],
-        timeline.maxResults
-      );
-      let albums = filterAlbumsByTimeline(albumsFromSearchResults(results), timeline);
-      let releases = extractReleases(albums, releaseType, country, country);
+      const releases = await discoverReleases(timeline, country, token, releaseType, (msg) => {
+        document.getElementById('searchBtn').textContent = msg;
+      });
 
       rows = await filterArtistsByOrigin(releases, country, (cur, total) => {
-        document.getElementById('searchBtn').textContent = `Checking ${cur}/${total}...`;
+        document.getElementById('searchBtn').textContent = `Verifying ${cur}/${total} artists...`;
       });
     }
 
@@ -1121,6 +1215,12 @@ async function handleSearch() {
   } finally {
     setLoading(false);
   }
+}
+
+function changePage(delta) {
+  const totalPages = Math.max(1, Math.ceil(exportRows.length / ROWS_PER_PAGE));
+  currentPage = Math.min(totalPages, Math.max(1, currentPage + delta));
+  renderResults(exportRows, lastCountry, lastTimeline);
 }
 
 function dedupeArtistsForGrid(rows) {
@@ -1146,6 +1246,11 @@ function renderResults(rows, countryCode, timeline) {
   const countryName = getCountryName(countryCode);
   const releasedYes = rows.filter(r => r.released === 'Yes').length;
   const uniqueArtists = new Set(rows.map(r => r.artistName)).size;
+  const totalPages = Math.max(1, Math.ceil(rows.length / ROWS_PER_PAGE));
+  if (currentPage > totalPages) currentPage = totalPages;
+
+  const startIdx = (currentPage - 1) * ROWS_PER_PAGE;
+  const pageRows = rows.slice(startIdx, startIdx + ROWS_PER_PAGE);
 
   document.getElementById('stats').innerHTML = `
     <div class="stats">
@@ -1154,8 +1259,11 @@ function renderResults(rows, countryCode, timeline) {
       <div class="stat"><div class="stat-value">${rows.length}</div><div class="stat-label">Total rows</div></div>
     </div>`;
 
+  const rangeLabel = rows.length
+    ? ` · showing ${startIdx + 1}–${Math.min(startIdx + ROWS_PER_PAGE, rows.length)} of ${rows.length}`
+    : '';
   document.getElementById('meta').innerHTML =
-    `<div class="meta">Showing artists from <span>${countryName}</span> · timeline <span>${timeline.label}</span></div>`;
+    `<div class="meta">Artists from <span>${countryName}</span> · <span>${timeline?.label || ''}</span>${rangeLabel}</div>`;
 
   document.getElementById('emptyState').style.display = 'none';
   document.getElementById('resultsArea').style.display = rows.length ? 'block' : 'none';
@@ -1164,6 +1272,7 @@ function renderResults(rows, countryCode, timeline) {
   tbody.innerHTML = '';
 
   if (!rows.length) {
+    document.getElementById('pagination').style.display = 'none';
     document.getElementById('emptyState').style.display = 'block';
     document.getElementById('emptyState').textContent =
       'No matching artists found. Try widening the date range or check your roster names.';
@@ -1171,7 +1280,7 @@ function renderResults(rows, countryCode, timeline) {
     return;
   }
 
-  rows.forEach(row => {
+  pageRows.forEach(row => {
     const tr = document.createElement('tr');
     const releasedClass = row.released === 'Yes' ? 'status-yes' : 'status-no';
     tr.innerHTML = `
@@ -1187,6 +1296,16 @@ function renderResults(rows, countryCode, timeline) {
       </td>`;
     tbody.appendChild(tr);
   });
+
+  const pagination = document.getElementById('pagination');
+  if (rows.length > ROWS_PER_PAGE) {
+    pagination.style.display = 'flex';
+    document.getElementById('pageInfo').textContent = `Page ${currentPage} of ${totalPages}`;
+    document.getElementById('prevPageBtn').disabled = currentPage <= 1;
+    document.getElementById('nextPageBtn').disabled = currentPage >= totalPages;
+  } else {
+    pagination.style.display = 'none';
+  }
 
   if (currentArtists.length) {
     document.getElementById('layout').style.display = 'grid';
@@ -1309,8 +1428,12 @@ function closePanel() {
 function clearResults() {
   exportRows = [];
   currentArtists = [];
+  currentPage = 1;
+  lastTimeline = null;
+  lastCountry = null;
   document.getElementById('resultsBody').innerHTML = '';
   document.getElementById('resultsArea').style.display = 'none';
+  document.getElementById('pagination').style.display = 'none';
   document.getElementById('stats').innerHTML = '';
   document.getElementById('meta').innerHTML = '';
   document.getElementById('grid').innerHTML = '';
